@@ -10,7 +10,7 @@ class GameRunner:
     def __init__(self, level_file, agent_class):
         self.game = GraphColoringGame(level_file)
         self.agent = agent_class(self.game.get_visible_state())
-        self.max_steps = len(self.game.nodes) * 2
+        self.max_steps = len(self.game.nodes) * 10 # Arbitrary large limit to prevent infinite loops.  
 
     def run_game(self):
         """
