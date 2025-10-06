@@ -195,34 +195,6 @@ Referee: Assigned color 'Green' to node 'C'.
 - Scoring is based on the official scoring system described above
 - Rankings determined by total score across all levels
 
-
-## Common Issues & Debugging
-
-### CSP Implementation Issues
-```
-Agent failed: No backtracking CSP solver detected
-```
-**Solution**: Ensure you implement proper backtracking search, not greedy or local search.
-
-### Agent Crashes
-```
-Agent crashed in get_next_move: KeyError: 'visible_graph'
-```
-**Solution**: Verify you're accessing correct state dictionary keys.
-
-### Invalid Actions
-```
-Invalid move: Cannot move to node 'X' - not visible or already colored
-```
-**Solution**: Only move to uncolored nodes in `state['visible_graph']['nodes']`.
-
-### Excessive Reassignments
-```
-Score: -15 (Too many reassignments detected)
-```
-**Solution**: Implement better constraint propagation and planning to avoid backtracking.
-
-
 ## Assignment Requirements Summary
 
 ✅ **Must Implement**: Backtracking CSP solver with heuristics  
