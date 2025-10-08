@@ -1,6 +1,6 @@
 import json
 from game_engine import GraphColoringGame
-from template import CSP_AGENT 
+from student_template import CSP_AGENT 
 
 class GameRunner:
     """
