@@ -1,10 +1,13 @@
+
 import json
 from collections import deque, defaultdict
+import math
 
 class GraphColoringGame:
     def __init__(self, level_file):
         with open(level_file) as f:
             data = json.load(f)
+        
         self.nodes = data["graph"]["nodes"]
         self.edges = data["graph"]["edges"]
         self.colors = data["colors"]
@@ -13,69 +16,98 @@ class GraphColoringGame:
         self.pre_colored = data.get("pre_colored", {})
         
         self.adj = defaultdict(list)
-        for u,v in self.edges:
+        for u, v in self.edges:
             self.adj[u].append(v)
             self.adj[v].append(u)
-        
-        # node colors: start with pre_colored or None
-        self.node_colors = {n:self.pre_colored.get(n, None) for n in self.nodes}
-        
-        # track backtracks/reassignments
+            
+        self.node_colors = {n: self.pre_colored.get(n, None) for n in self.nodes}
         self.reassignments = 0
-        self.moves = [self.start_node]
-        
-    def visible_subgraph(self, current_node):
-        # This function will return nodes and edges visible from current_node within radius
-        visited = set()
-        queue = deque([(current_node,0)])
-        vis_nodes = set()
-        vis_edges = set()
+        self.moves = 0
+        self.current_node = self.start_node
+
+    def get_visible_state(self):
+        """
+        Returns the limited, partially observable state for the agent.
+        """
+        queue = deque([(self.current_node, 0)])
+        visited_bfs = {self.current_node}
+        visible_nodes = {self.current_node}
+        visible_edges = set()
+
         while queue:
-            node, d = queue.popleft()
-            if node in visited or d > self.visibility_radius:
+            node, distance = queue.popleft()
+            if distance >= self.visibility_radius:
                 continue
-            visited.add(node)
-            vis_nodes.add(node)
+            
             for neighbor in self.adj[node]:
-                vis_edges.add(tuple(sorted([node,neighbor])))
-                queue.append((neighbor,d+1))
-        return list(vis_nodes), list(vis_edges)
-    
-    def assign_color(self, node, color):
-        # will assign color, count backtracks/reassignments
-        if self.node_colors[node] is not None and self.node_colors[node] != color:
-            self.reassignments += 1
-        self.node_colors[node] = color
-    
-    def is_valid_assignment(self, node, color):
-        # check assignment violations
-        for neighbor in self.adj[node]:
-            if self.node_colors.get(neighbor) == color:
-                return False
-        return True
-    
-    def move_to_node(self, node):
-        self.moves.append(node)
-    
-    def score(self):
-        correct = all(self.node_colors[n] is not None for n in self.nodes)
-        base = 100 if correct else 0
-        return max(0, base - self.reassignments)
-    
-    def get_state(self, current_node):
-        # Return visible subgraph and current node colors
-        vis_nodes, vis_edges = self.visible_subgraph(current_node)
-        vis_colors = {n:self.node_colors[n] for n in vis_nodes}
+                visible_edges.add(tuple(sorted((node, neighbor))))
+                if neighbor not in visited_bfs:
+                    visited_bfs.add(neighbor)
+                    visible_nodes.add(neighbor)
+                    queue.append((neighbor, distance + 1))
+        
         return {
-            "visible_nodes": vis_nodes,
-            "visible_edges": vis_edges,
-            "visible_colors": vis_colors
+            "current_node": self.current_node,
+            "available_colors": self.colors,
+            "visible_graph": {
+                "nodes": list(visible_nodes),
+                "edges": [list(e) for e in visible_edges if e[0] in visible_nodes and e[1] in visible_nodes],
+            },
+            "node_colors": {n: self.node_colors[n] for n in visible_nodes}
         }
-    
-    def summary(self):
+
+    def move_to(self, node):
+        """Updates the agent's current position and tracks move counts."""
+        if node != self.current_node:
+            self.moves += 1
+        self.current_node = node
+        return f"Moved to {node}."
+
+    def assign_color(self, node, color):
+        """Assigns a color and tracks reassignments."""
+        if node in self.pre_colored:
+            return "Cannot re-color a pre-colored node."
+            
+        if self.node_colors.get(node) is not None and self.node_colors.get(node) != color:
+            self.reassignments += 1
+        
+        self.node_colors[node] = color
+        return f"Colored {node} with {color}."
+
+    def is_fully_and_correctly_colored(self):
+        """Checks if the entire graph is solved."""
+        if not all(self.node_colors.get(n) is not None for n in self.nodes):
+            return False
+        
+        for u, v in self.edges:
+            if self.node_colors.get(u) == self.node_colors.get(v):
+                return False
+        
+        return True
+
+    def get_final_summary(self):
+        """
+        Calculates the final score, assigning negative infinity to any failed solution.
+        """
+        is_correct = self.is_fully_and_correctly_colored()
+        
+        if is_correct:
+            total_penalties = self.reassignments + self.moves
+            final_score = 100 - total_penalties
+            
+            if self.reassignments == 0:
+                final_score += 10
+            
+            final_score = round(final_score)
+        else:
+            final_score = -math.inf
+
+        print(f"Final Score: {final_score} (Correct: {is_correct}, Moves: {self.moves}, Reassignments: {self.reassignments})")
         return {
             "node_colors": self.node_colors,
             "moves": self.moves,
             "reassignments": self.reassignments,
-            "score": self.score()
+            "score": final_score,
+            "is_correct": is_correct
         }
+
