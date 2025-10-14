@@ -3,12 +3,12 @@ import copy
 
 class CSP_AGENT:
     """
-    Advanced CSP Agent for Graph Coloring with Partial Observability
+    CSP Agent for Graph Coloring with Partial Observability
     Uses intelligent exploration, constraint propagation, and backtracking with heuristics
     """
     def __init__(self, initial_state):
         """Initialize the agent with memory and CSP structures"""
-        print("Advanced CSP Agent (B22CH032) initialized.")
+        print("CSP Agent initialized.")
         
         # Graph knowledge storage
         self.all_nodes = set()
