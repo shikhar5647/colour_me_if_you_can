@@ -1,6 +1,8 @@
 import json
 from game_engine import GraphColoringGame
 from student_template import CSP_AGENT 
+from B22CH032 import B22CH032
+from B22EE088 import B22EE088
 
 class GameRunner:
     """
@@ -93,24 +95,60 @@ class GameRunner:
         return True, "OK"
 
 if __name__ == "__main__":
-    level_file = "level5.json"
+    level_file = "level6.json"
     level_data = {
   "graph": {
-    "nodes": ["A1", "A2", "A3", "B1", "B2", "B3", "C1", "C2", "C3"],
-    "edges": [["A1","A2"], ["A2","A3"], ["B1","B2"], ["B2","B3"], ["C1","C2"], ["C2","C3"],
-              ["A1","B1"], ["A2","B2"], ["A3","B3"], ["B1","C1"], ["B2","C2"], ["B3","C3"],
-              ["A1","B2"], ["A2","B3"], ["B1","C2"], ["B2","C3"]]
+    "nodes": [
+      "N1",
+      "N2",
+      "N3",
+      "N4",
+      "N5",
+      "N6"
+    ],
+    "edges": [
+      [
+        "N1",
+        "N2"
+      ],
+      [
+        "N2",
+        "N3"
+      ],
+      [
+        "N3",
+        "N4"
+      ],
+      [
+        "N2",
+        "N5"
+      ],
+      [
+        "N3",
+        "N6"
+      ],
+      [
+        "N5",
+        "N6"
+      ]
+    ]
   },
-  "pre_colored": {"A1":"Blue", "C3":"Red"},
-  "colors": ["Red", "Green", "Blue"],
-  "start_node": "B2",
+  "pre_colored": {
+    "N1": "Red"
+  },
+  "colors": [
+    "Red",
+    "Green",
+    "Blue"
+  ],
+  "start_node": "N2",
   "visibility_radius": 1
 }
     #with open(level_file, 'w') as f: json.dump(level_data, f)
 
-    runner = GameRunner(level_file, CSP_AGENT)
+    runner = GameRunner(level_file, B22EE088)  # Change to B22CH032 or B22EE088 as needed
     final_summary = runner.run_game()
 
     print("\n" + "="*20 + " FINAL SUMMARY " + "="*20)
-    #print(json.dumps(final_summary, indent=2))
+    print(json.dumps(final_summary, indent=2))
 

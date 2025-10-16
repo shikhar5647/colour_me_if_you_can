@@ -1,131 +1,350 @@
+import random
 from collections import deque, defaultdict
-import copy
 
-class CSP_AGENT:
+class B22CH032:
     """
-    Elite CSP Agent for Graph Coloring with Partial Observability
-    Features: Lookahead planning, backtracking detection, optimal path finding, and predictive exploration
+    My CSP agent code 
     """
     def __init__(self, initial_state):
-        """Initialize the agent with advanced memory and CSP structures"""
-        print("Elite CSP Agent (B22CH032) initialized.")
-        
-        # Graph knowledge storage
+        print("B22CH032 CSP Agent Initialized.")
+        # PERSISTENT STATE (Agent's Global Memory)
         self.all_nodes = set()
-        self.all_edges = set()
         self.adjacency = defaultdict(set)
-        
-        # CSP state
-        self.node_colors = {}
-        self.domains = {}
-        self.available_colors = []
-        
-        # Movement and exploration tracking
-        self.uncolored_nodes = set()
-        self.visited_nodes = set()
-        self.move_history = []
-        
-        # Advanced planning
+        self.edges_seen = set()
+        # CSP State
+        self.available_colors = initial_state['available_colors']
+        self.pre_colored = {} # Nodes whose color cannot be changed (fixed constraints)
         self.current_position = None
-        self.pre_colored = {}
-        self.coloring_order = []  # Planned coloring sequence
-        self.graph_fully_explored = False
+        # The single source of truth for the entire known graph's coloring
+        # {node: color | None} - Best known valid assignment
+        self.global_assignment = {}
         
-        # Backtracking detection
-        self.last_assignment = {}  # Track previous color assignments
-        
-        # Initialize with first observation
         self._update_knowledge(initial_state)
-        
+
+    # 1. KNOWLEDGE MANAGEMENT AND SYNCHRONIZATION
+
     def _update_knowledge(self, visible_state):
-        """Update internal graph knowledge from current observation"""
+        """Update graph knowledge from observation and synchronize state."""
         self.current_position = visible_state['current_node']
-        self.available_colors = visible_state['available_colors']
         
-        # Add visible nodes
+        # 1. Update Graph Structure (Nodes and Edges)
         for node in visible_state['visible_graph']['nodes']:
             if node not in self.all_nodes:
                 self.all_nodes.add(node)
-                self.uncolored_nodes.add(node)
-                self.domains[node] = set(self.available_colors)
-        
-        # Add visible edges and build adjacency
-        for edge in visible_state['visible_graph']['edges']:
-            u, v = edge[0], edge[1]
+                # Initialize new node as uncolored
+                self.global_assignment[node] = None 
+                
+        for u, v in visible_state['visible_graph']['edges']:
             edge_tuple = tuple(sorted([u, v]))
-            if edge_tuple not in self.all_edges:
-                self.all_edges.add(edge_tuple)
+            if edge_tuple not in self.edges_seen:
+                self.edges_seen.add(edge_tuple)
                 self.adjacency[u].add(v)
                 self.adjacency[v].add(u)
-        
-        # Update coloring information
+
+        # 2. Synchronize Colors with Game State
         for node, color in visible_state['node_colors'].items():
             if color is not None:
-                # Detect pre-colored nodes
-                if node not in self.visited_nodes and node not in self.node_colors:
+                # If a node appears colored in the game (either pre-colored or from a 
+                # previous turn), update our memory to reflect the ground truth.
+                self.global_assignment[node] = color
+                # If it's a new fixed color, mark it as pre-colored to exclude from search variables.
+                if node not in self.pre_colored and self.global_assignment.get(node) == color:
                     self.pre_colored[node] = color
-                
-                self.node_colors[node] = color
-                if node in self.uncolored_nodes:
-                    self.uncolored_nodes.discard(node)
-                
-                # Update domains of neighbors
-                self._propagate_constraints(node, color)
-    
-    def _propagate_constraints(self, node, color):
-        """Advanced constraint propagation with arc consistency"""
+            
+            elif node in self.global_assignment and node not in self.pre_colored:
+                 # If the game reports None, and it wasn't pre-colored, it's unassigned.
+                 self.global_assignment[node] = None
+
+    # 2. CSP HELPER FUNCTIONS (Consistency, Heuristics)
+    def _get_available_colors(self, node, assignment):
+        """Returns the set of colors consistent with the current assignment."""
+        neighbor_colors = set()
         for neighbor in self.adjacency[node]:
-            if neighbor not in self.node_colors:
-                if neighbor in self.domains:
-                    self.domains[neighbor].discard(color)
+            if neighbor in assignment and assignment[neighbor] is not None:
+                neighbor_colors.add(assignment[neighbor])
+        
+        return [c for c in self.available_colors if c not in neighbor_colors]
+
+    def _select_unassigned_variable(self, assignment, unassigned_nodes):
+        """MRV with Degree Heuristic tie-breaker."""
+        if not unassigned_nodes:
+            return None
+        best_node = None
+        min_remaining_values = float('inf')
+        max_degree = -1 
+        
+        for node in unassigned_nodes:
+            # MRV: Remaining Legal Colors
+            num_colors = len(self._get_available_colors(node, assignment))
+            
+            # Degree: Unassigned Neighbors
+            degree = len([n for n in self.adjacency[node] if n in unassigned_nodes])
+
+            # Selection Logic: Prioritize MRV, then Degree
+            if num_colors < min_remaining_values:
+                min_remaining_values = num_colors
+                max_degree = degree
+                best_node = node
+            elif num_colors == min_remaining_values and degree > max_degree:
+                max_degree = degree
+                best_node = node
+                
+        return best_node
+
+    def _order_domain_values(self, node, assignment, unassigned_nodes):
+        """LCV heuristic."""
+        available_colors = self._get_available_colors(node, assignment)
+        if not available_colors:
+            return []
+        
+        color_scores = []
+        for color in available_colors:
+            constraint_count = 0
+            # Count how many choices this color eliminates for unassigned neighbors
+            for neighbor in self.adjacency[node]:
+                if neighbor in unassigned_nodes:
+                    # Calculate domain size if 'color' is assigned to 'node'
+                    temp_assignment = assignment.copy()
+                    temp_assignment[node] = color
                     
-                    # AC-3 style propagation: if domain becomes singleton, propagate further
-                    if len(self.domains[neighbor]) == 1:
-                        only_color = list(self.domains[neighbor])[0]
-                        # Check if this would cause conflicts
-                        self._check_singleton_viability(neighbor, only_color)
-    
-    def _check_singleton_viability(self, node, color):
-        """Check if a forced color assignment is viable"""
-        for neighbor in self.adjacency[node]:
-            if neighbor in self.node_colors and self.node_colors[neighbor] == color:
-                # Conflict detected - need to be careful
-                return False
-        return True
-    
-    def _calculate_node_priority(self, node):
-        """Calculate priority score for node selection (lower is better)"""
-        domain_size = len(self.domains.get(node, self.available_colors))
-        degree = len(self.adjacency.get(node, []))
+                    # Count remaining legal colors for neighbor
+                    remaining_options = len(self._get_available_colors(neighbor, temp_assignment))
+                    
+                    # The constraint is inversely proportional to the remaining options
+                    constraint_count += remaining_options
+            
+            # LCV chooses the value that leaves the most options (highest score)
+            color_scores.append((constraint_count, color))
+            
+        # Sort by constraint_count (descending) - choose least constraining value first
+        color_scores.sort(key=lambda x: x[0], reverse=True)
+        return [color for _, color in color_scores]
+
+    # 3. CONSTRAINT PROPAGATION (AC-3)
+    def _remove_inconsistent_values(self, X, Y, domains):
+        """Makes arc (X, Y) consistent, part of AC-3."""
+        removed = False
+        domain_X = domains.get(X, set())
+        domain_Y = domains.get(Y, set())
         
-        # Count uncolored neighbors (future constraint potential)
-        uncolored_neighbors = sum(1 for n in self.adjacency.get(node, []) 
-                                 if n not in self.node_colors)
+        for x in list(domain_X):
+            # Check if there is *at least one* y in D(Y) that satisfies the constraint
+            consistent_y_found = False
+            for y in domain_Y:
+                if x != y:
+                    consistent_y_found = True
+                    break
+            
+            if not consistent_y_found:
+                domain_X.remove(x)
+                removed = True
+                
+        domains[X] = domain_X
+        return removed
+
+    def _ac3_propagation(self, assignment, unassigned_nodes):
+        """Runs the AC-3 algorithm to enforce arc consistency."""
+        domains = {}
+        for node in unassigned_nodes:
+            # Initialize domain based on current partial assignment
+            domains[node] = set(self._get_available_colors(node, assignment))
+
+        queue = deque()
+        # Initialize queue with all arcs between unassigned nodes
+        for u in unassigned_nodes:
+            for v in self.adjacency[u]:
+                if v in unassigned_nodes and u != v:
+                    queue.append((u, v))
         
-        # Prefer nodes with: small domain, high degree, many uncolored neighbors
-        priority = (domain_size * 1000) - (degree * 100) - (uncolored_neighbors * 50)
-        return priority
-    
-    def _find_optimal_next_target(self, visible_nodes):
-        """Find the absolute best node to visit next using comprehensive analysis"""
-        # Separate visible uncolored and non-visible uncolored
-        visible_uncolored = [n for n in visible_nodes if n in self.uncolored_nodes]
+        while queue:
+            X, Y = queue.popleft()
+            
+            if self._remove_inconsistent_values(X, Y, domains):
+                if not domains[X]:
+                    return False, domains  # Failure: Domain emptied
+                
+                # Add all relevant arcs for reprocessing: (Z, X)
+                for Z in self.adjacency[X]:
+                    if Z != Y and Z in unassigned_nodes:
+                        queue.append((Z, X))
+                        
+        return True, domains
+    # 4. BACKTRACKING SEARCH (Fwd Check + Heuristics)
+    def _backtrack_search_fwd_check(self, assignment, unassigned_nodes, domains):
+        """Recursive backtracking search with Forward Checking and Heuristics."""
         
-        if visible_uncolored:
-            # Among visible, pick most constrained
-            visible_uncolored.sort(key=self._calculate_node_priority)
-            return visible_uncolored[0], True  # True means it's visible
+        if not unassigned_nodes:
+            return assignment
         
-        # No uncolored visible - need to navigate to non-visible uncolored
-        known_uncolored = list(self.uncolored_nodes)
-        if known_uncolored:
-            known_uncolored.sort(key=self._calculate_node_priority)
-            return known_uncolored[0], False  # False means need to navigate
+        node = self._select_unassigned_variable(assignment, unassigned_nodes)
+
+        # Get the ordered colors from the AC-3 pruned domains
+        domain_values = [c for c in self._order_domain_values(node, assignment, unassigned_nodes) 
+                         if c in domains[node]] 
+
+        for color in domain_values:
+            
+            # 1. Assignment and Consistency Check (Consistency is guaranteed by LCV/MRV)
+            assignment[node] = color
+            new_unassigned = unassigned_nodes - {node}
+            # 2. Forward Checking: Check if any unassigned neighbor's domain is emptied
+            valid = True
+            for neighbor in self.adjacency[node]:
+                if neighbor in new_unassigned:
+                    if not self._get_available_colors(neighbor, assignment):
+                        valid = False
+                        break
+            
+            if valid:
+                # 3. Recurse
+                result = self._backtrack_search_fwd_check(assignment, new_unassigned, domains)
+                if result is not None:
+                    return result
+            
+            # 4. Backtrack
+            assignment[node] = None 
+            
+        return None
+
+    # 5. GLOBAL PLANNING AND REPAIR
+    def _plan_global_coloring(self):
+        """Runs CSP with a repair strategy if the initial plan fails."""
+        unassigned_vars = {n for n in self.all_nodes if n not in self.pre_colored and self.global_assignment.get(n) is None}
+        # Keep a copy of the assignment to modify during the repair process
+        assignment = self.global_assignment.copy()
+        # Retry loop for repair
+        for attempt in range(2): 
+            print(f"Planning: Starting attempt {attempt + 1}. Unassigned: {len(unassigned_vars)}")
+            # Step 1: Run AC-3 on the current state (prunes domains aggressively)
+            ac3_ok, domains = self._ac3_propagation(assignment, unassigned_vars)
+            
+            if not ac3_ok:
+                print("Planning: AC-3 detected an inevitable conflict early.")
+                if attempt == 0: 
+                    # If initial AC-3 fails, try repair by clearing a past assignment
+                    pass
+                else: 
+                    # Repair failed, state is impossible.
+                    return False
+            # Step 2: Run the full search using the pruned domains
+            result = self._backtrack_search_fwd_check(assignment.copy(), unassigned_vars, domains)
+            if result:
+                # SUCCESS
+                self.global_assignment.update(result)
+                print(f"Planning: Successfully updated global plan (Attempt {attempt+1}).")
+                return True
+            # Step 3: REPAIR STRATEGY (If search failed on the first attempt)
+            if attempt == 0:
+                print("Planning: Search failed. Attempting repair by clearing high-degree node...")
+                # Find the assigned, non-pre-colored node with the highest degree.
+                nodes_to_clear = [n for n in self.all_nodes if n not in self.pre_colored and assignment.get(n) is not None]
+                if not nodes_to_clear:
+                    # Nothing to clear, no way to fix the conflict
+                    return False
+                    
+                # Heuristic: Clear the highest degree node (most constrained)
+                node_to_clear = max(nodes_to_clear, key=lambda n: len(self.adjacency[n]))
+                
+                print(f"Planning: Clearing assignment of '{node_to_clear}' to enable repair.")
+                
+                # Clear its color and add it back to the unassigned set for the next attempt
+                assignment[node_to_clear] = None
+                unassigned_vars.add(node_to_clear)
+            
+        return False
+
+    # 6. ACTION LOGIC
+    def get_next_move(self, visible_state):
+        """Intelligent movement heuristic."""
+        self._update_knowledge(visible_state)
         
-        return None, False
-    
-    def _bfs_shortest_path(self, start, goal, consider_colored=True):
-        """Find shortest path from start to goal"""
+        uncolored_nodes = {n for n in self.all_nodes if self.global_assignment.get(n) is None}
+        visible_nodes = set(visible_state['visible_graph']['nodes'])
+        
+        # 1. Stay at current position if uncolored (to color it this turn)
+        if self.current_position in uncolored_nodes:
+            return {'action': 'move', 'node': self.current_position}
+        
+        # 2. Move to an uncolored neighbor (within radius 1) - prioritize by constraint
+        uncolored_neighbors = [n for n in visible_nodes if n in uncolored_nodes]
+        if uncolored_neighbors:
+            
+            def move_priority(node):
+                # Calculate MRV (lower is better)
+                mrv = len(self._get_available_colors(node, self.global_assignment))
+                
+                # Calculate Degree Heuristic (higher is better)
+                degree = len([n for n in self.adjacency[node] if n in uncolored_nodes])
+                
+                # Heuristic tuple: (MRV, -Degree) - Lower tuple is better (most constrained)
+                return (mrv, -degree)
+
+            # Find the best target among visible, uncolored nodes
+            target = min(uncolored_neighbors, key=move_priority)
+            return {'action': 'move', 'node': target}
+
+        # 3. Navigate to closest uncolored node in known graph
+        if uncolored_nodes:
+            # Prioritize the most constrained uncolored node in the *entire* known graph
+            target = self._select_unassigned_variable(self.global_assignment, uncolored_nodes)
+            
+            path = self._find_path(self.current_position, target)
+            if path and len(path) > 1:
+                next_node = path[1]
+                # Ensure the next step is a visible node (which it must be if the path is found)
+                if next_node in visible_nodes: 
+                    return {'action': 'move', 'node': next_node}
+
+        # 4. Explore a random visible neighbor to expand knowledge
+        visible_neighbors = [n for n in visible_nodes if n != self.current_position]
+        if visible_neighbors:
+            target = random.choice(visible_neighbors)
+            return {'action': 'move', 'node': target}
+        
+        # 5. Stay put (Fully colored or blocked)
+        return {'action': 'move', 'node': self.current_position}
+
+    def get_color_for_node(self, node_to_color, visible_state):
+        """Color node using the result of the continuous global planning."""
+        self._update_knowledge(visible_state)
+        
+        # 1. Check if pre-colored (Cannot re-color these)
+        if node_to_color in self.pre_colored:
+             color = self.pre_colored[node_to_color]
+             return {'action': 'color', 'node': node_to_color, 'color': color}
+
+        # 2. Execute Global Planning (This is the primary way to minimize reassignments)
+        if not self._plan_global_coloring():
+            print("Agent: Global plan failed. Forced to use local heuristic.")
+        
+        # 3. Use the result of the new consistent plan
+        color = self.global_assignment.get(node_to_color)
+        
+        if color is not None:
+            # The color is derived from a consistent global plan
+            return {'action': 'color', 'node': node_to_color, 'color': color}
+        
+        # 4. Fallback (Should only happen if planning failed globally and 
+        #    the node to color couldn't be assigned by the repair strategy)
+        valid_colors = self._get_available_colors(node_to_color, self.global_assignment)
+            
+        if valid_colors:
+            # Use LCV on the remaining valid options as a safer fallback
+            lcv_order = self._order_domain_values(node_to_color, self.global_assignment, set())
+            # Find the first color that is still valid based on the final assignment state
+            chosen_color = next((c for c in lcv_order if c in valid_colors), self.available_colors[0])
+            
+            self.global_assignment[node_to_color] = chosen_color
+            return {'action': 'color', 'node': node_to_color, 'color': chosen_color}
+            
+        # Absolute dead-end
+        fallback = self.available_colors[0]
+        self.global_assignment[node_to_color] = fallback
+        return {'action': 'color', 'node': node_to_color, 'color': fallback}
+
+    # 7. PATHFINDING HELPER    
+    def _find_path(self, start, goal):
+        """BFS to find shortest path in the known graph."""
         if start == goal:
             return [start]
         
@@ -136,172 +355,12 @@ class CSP_AGENT:
             current, path = queue.popleft()
             
             for neighbor in self.adjacency[current]:
-                if neighbor in visited:
-                    continue
+                if neighbor not in visited:
+                    new_path = path + [neighbor]
+                    if neighbor == goal:
+                        return new_path
                     
-                # Allow navigation through all known nodes
-                if neighbor not in self.all_nodes:
-                    continue
-                
-                new_path = path + [neighbor]
-                if neighbor == goal:
-                    return new_path
-                
-                visited.add(neighbor)
-                queue.append((neighbor, new_path))
+                    visited.add(neighbor)
+                    queue.append((neighbor, new_path))
         
         return None
-    
-    def _is_fully_explored(self):
-        """Heuristic to determine if we've likely seen the whole graph"""
-        # If all known nodes are colored and we haven't discovered new nodes recently
-        if not self.uncolored_nodes:
-            return True
-        
-        # If we have a well-connected component and reasonable coverage
-        if len(self.visited_nodes) >= len(self.all_nodes) * 0.8:
-            return True
-            
-        return False
-    
-    def _predict_conflicts(self, node, color):
-        """Predict if assigning this color will cause future conflicts"""
-        conflict_score = 0
-        
-        for neighbor in self.adjacency[node]:
-            if neighbor not in self.node_colors:
-                # Check if removing this color would over-constrain neighbor
-                neighbor_domain = self.domains.get(neighbor, set(self.available_colors))
-                if color in neighbor_domain:
-                    remaining = len(neighbor_domain) - 1
-                    if remaining <= 1:
-                        conflict_score += 10  # High penalty for over-constraining
-                    else:
-                        conflict_score += 1
-        
-        return conflict_score
-    
-    def get_next_move(self, visible_state):
-        """Decide where to move next using elite exploration strategy"""
-        self._update_knowledge(visible_state)
-        self.visited_nodes.add(self.current_position)
-        
-        visible_nodes = set(visible_state['visible_graph']['nodes'])
-        
-        # If current node is uncolored, stay here (we'll color it next)
-        if self.current_position in self.uncolored_nodes:
-            print(f"Agent: Staying at uncolored node '{self.current_position}'")
-            return {'action': 'move', 'node': self.current_position}
-        
-        # Find optimal next target
-        target, is_visible = self._find_optimal_next_target(visible_nodes)
-        
-        if target:
-            if is_visible:
-                # Target is visible - go directly
-                print(f"Agent: Moving to high-priority target '{target}' (priority: {self._calculate_node_priority(target)})")
-                self.move_history.append(target)
-                return {'action': 'move', 'node': target}
-            else:
-                # Target not visible - find path
-                path = self._bfs_shortest_path(self.current_position, target)
-                
-                if path and len(path) > 1:
-                    next_node = path[1]
-                    
-                    # Prefer uncolored intermediate nodes if available
-                    if next_node not in self.uncolored_nodes:
-                        # Check if there's an uncolored visible alternative
-                        uncolored_visible = [n for n in visible_nodes if n in self.uncolored_nodes]
-                        if uncolored_visible:
-                            next_node = min(uncolored_visible, key=self._calculate_node_priority)
-                    
-                    print(f"Agent: Navigating toward '{target}' via '{next_node}'")
-                    self.move_history.append(next_node)
-                    return {'action': 'move', 'node': next_node}
-        
-        # Fallback: explore any unvisited visible node
-        unvisited_visible = [n for n in visible_nodes if n not in self.visited_nodes]
-        if unvisited_visible:
-            target = unvisited_visible[0]
-            print(f"Agent: Exploring unvisited node '{target}'")
-            self.move_history.append(target)
-            return {'action': 'move', 'node': target}
-        
-        # Last resort: stay put
-        print(f"Agent: Staying at '{self.current_position}' (exploration complete)")
-        return {'action': 'move', 'node': self.current_position}
-    
-    def get_color_for_node(self, node_to_color, visible_state):
-        """Choose optimal color using advanced CSP heuristics and lookahead"""
-        self._update_knowledge(visible_state)
-        
-        # Handle pre-colored nodes
-        if node_to_color in self.pre_colored:
-            color = self.pre_colored[node_to_color]
-            print(f"Agent: Keeping pre-colored node '{node_to_color}' as '{color}'")
-            self.node_colors[node_to_color] = color
-            self.uncolored_nodes.discard(node_to_color)
-            return {'action': 'color', 'node': node_to_color, 'color': color}
-        
-        # Get colors used by neighbors
-        neighbor_colors = set()
-        for neighbor in self.adjacency[node_to_color]:
-            if neighbor in self.node_colors:
-                neighbor_colors.add(self.node_colors[neighbor])
-        
-        # Get available colors from domain
-        available = self.domains.get(node_to_color, set(self.available_colors))
-        valid_colors = [c for c in available if c not in neighbor_colors]
-        
-        # If no valid colors in domain, use any color not used by neighbors
-        if not valid_colors:
-            valid_colors = [c for c in self.available_colors if c not in neighbor_colors]
-        
-        if valid_colors:
-            # Advanced color selection with conflict prediction
-            color_scores = []
-            
-            for color in valid_colors:
-                # Calculate multiple metrics
-                constraint_count = sum(1 for n in self.adjacency[node_to_color] 
-                                     if n not in self.node_colors and 
-                                     color in self.domains.get(n, set()))
-                
-                conflict_score = self._predict_conflicts(node_to_color, color)
-                
-                # Calculate how many neighbors would still have options
-                future_flexibility = 0
-                for neighbor in self.adjacency[node_to_color]:
-                    if neighbor not in self.node_colors:
-                        neighbor_domain = self.domains.get(neighbor, set(self.available_colors))
-                        remaining = len(neighbor_domain - {color})
-                        future_flexibility += remaining
-                
-                # Composite score: minimize constraints, minimize conflicts, maximize flexibility
-                total_score = (constraint_count * 10) + conflict_score - (future_flexibility * 5)
-                color_scores.append((total_score, color))
-            
-            # Choose color with best score (lowest)
-            color_scores.sort()
-            best_color = color_scores[0][1]
-            
-            print(f"Agent: Coloring '{node_to_color}' with optimized color '{best_color}' (score: {color_scores[0][0]})")
-            
-            # Update internal state
-            self.last_assignment[node_to_color] = best_color
-            self.node_colors[node_to_color] = best_color
-            self.uncolored_nodes.discard(node_to_color)
-            self._propagate_constraints(node_to_color, best_color)
-            
-            return {'action': 'color', 'node': node_to_color, 'color': best_color}
-        
-        # Emergency fallback (should rarely happen)
-        fallback_color = self.available_colors[0]
-        print(f"Agent: WARNING - Forced to use potentially conflicting color '{fallback_color}' for '{node_to_color}'")
-        
-        self.last_assignment[node_to_color] = fallback_color
-        self.node_colors[node_to_color] = fallback_color
-        self.uncolored_nodes.discard(node_to_color)
-        
-        return {'action': 'color', 'node': node_to_color, 'color': fallback_color}

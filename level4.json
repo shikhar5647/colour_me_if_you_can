@@ -1,0 +1,48 @@
+{
+  "graph": {
+    "nodes": [
+      "N1",
+      "N2",
+      "N3",
+      "N4",
+      "N5",
+      "N6"
+    ],
+    "edges": [
+      [
+        "N1",
+        "N2"
+      ],
+      [
+        "N2",
+        "N3"
+      ],
+      [
+        "N3",
+        "N4"
+      ],
+      [
+        "N2",
+        "N5"
+      ],
+      [
+        "N3",
+        "N6"
+      ],
+      [
+        "N5",
+        "N6"
+      ]
+    ]
+  },
+  "pre_colored": {
+    "N1": "Red"
+  },
+  "colors": [
+    "Red",
+    "Green",
+    "Blue"
+  ],
+  "start_node": "N2",
+  "visibility_radius": 1
+}
